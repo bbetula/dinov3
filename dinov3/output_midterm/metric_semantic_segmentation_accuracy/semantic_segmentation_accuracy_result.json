@@ -1,0 +1,129 @@
+{
+  "metric": "semantic_segmentation_accuracy_student_vs_teacher",
+  "definition": "student (M2F + DINOv3 ViT-L distilled) consistency vs teacher (DINOv3 ViT-7B + ADE20K M2F) pseudo-labels",
+  "gt_root": "/data1/user/data/2026.05.10_机狗二次数据采集结果_标定/image/res_dinov3_whole",
+  "pred_root": "/data1/user/data/2026.05.10_机狗二次数据采集结果_标定/image/res_robotdog_distill_midterm",
+  "num_classes": 150,
+  "full_image_metric": {
+    "pixel_accuracy": 0.9188496503588955,
+    "pixel_accuracy_percent": 91.88496503588955,
+    "mIoU": 0.36647246557252633,
+    "mIoU_percent": 36.647246557252636,
+    "mAcc": 0.453087441391171,
+    "mAcc_percent": 45.3087441391171,
+    "total_valid_pixels": 272302080,
+    "total_correct_pixels": 250204671,
+    "frequency_weighted_IoU": 0.8645452925010693,
+    "frequency_weighted_IoU_percent": 86.45452925010693,
+    "target_pixel_accuracy": 0.8,
+    "pass": true
+  },
+  "top_classes_by_pixel_share": [
+    {
+      "class_id": 3,
+      "class_name": "floor",
+      "gt_pixel_share": 0.39716157878779335,
+      "IoU": 0.981647800408235,
+      "IoU_percent": 98.1647800408235
+    },
+    {
+      "class_id": 0,
+      "class_name": "wall",
+      "gt_pixel_share": 0.22082449755800618,
+      "IoU": 0.8394499523925797,
+      "IoU_percent": 83.94499523925796
+    },
+    {
+      "class_id": 5,
+      "class_name": "ceiling",
+      "gt_pixel_share": 0.13900802373599203,
+      "IoU": 0.9232847191152704,
+      "IoU_percent": 92.32847191152705
+    },
+    {
+      "class_id": 24,
+      "class_name": "shelf",
+      "gt_pixel_share": 0.1140375203891208,
+      "IoU": 0.7134852611948747,
+      "IoU_percent": 71.34852611948746
+    },
+    {
+      "class_id": 40,
+      "class_name": "base",
+      "gt_pixel_share": 0.048771206595263614,
+      "IoU": 0.516149839458412,
+      "IoU_percent": 51.614983945841196
+    },
+    {
+      "class_id": 4,
+      "class_name": "tree",
+      "gt_pixel_share": 0.03362044461797721,
+      "IoU": 0.8359916294498634,
+      "IoU_percent": 83.59916294498633
+    },
+    {
+      "class_id": 41,
+      "class_name": "box",
+      "gt_pixel_share": 0.013580579333070096,
+      "IoU": 0.6946726381615322,
+      "IoU_percent": 69.46726381615322
+    },
+    {
+      "class_id": 32,
+      "class_name": "fence",
+      "gt_pixel_share": 0.013186351716446675,
+      "IoU": 0.3747840973995154,
+      "IoU_percent": 37.47840973995154
+    },
+    {
+      "class_id": 42,
+      "class_name": "column",
+      "gt_pixel_share": 0.004797058472707957,
+      "IoU": 0.6285070307379444,
+      "IoU_percent": 62.85070307379444
+    },
+    {
+      "class_id": 8,
+      "class_name": "windowpane",
+      "gt_pixel_share": 0.004547089761488417,
+      "IoU": 0.8142665390290509,
+      "IoU_percent": 81.42665390290509
+    },
+    {
+      "class_id": 12,
+      "class_name": "person",
+      "gt_pixel_share": 0.0029444762228771812,
+      "IoU": 0.737616898451255,
+      "IoU_percent": 73.7616898451255
+    },
+    {
+      "class_id": 38,
+      "class_name": "railing",
+      "gt_pixel_share": 0.0017198693451037906,
+      "IoU": 0.09204806644029193,
+      "IoU_percent": 9.204806644029192
+    },
+    {
+      "class_id": 15,
+      "class_name": "table",
+      "gt_pixel_share": 0.0016806151462375903,
+      "IoU": 0.626417179047716,
+      "IoU_percent": 62.641717904771596
+    },
+    {
+      "class_id": 14,
+      "class_name": "door",
+      "gt_pixel_share": 0.0013104490424751805,
+      "IoU": 0.5390979815202455,
+      "IoU_percent": 53.90979815202455
+    },
+    {
+      "class_id": 82,
+      "class_name": "light",
+      "gt_pixel_share": 0.0008713007260172232,
+      "IoU": 0.7002876900809464,
+      "IoU_percent": 70.02876900809464
+    }
+  ],
+  "per_image_csv_full": "/data1/user/Dense-Object-level-Mapping/dinov3/output_midterm/metric_semantic_segmentation_accuracy/metric_semantic_segmentation_accuracy_full_image_metrics.csv"
+}

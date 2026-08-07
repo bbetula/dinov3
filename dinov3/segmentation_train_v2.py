@@ -20,18 +20,21 @@ from detectron2.checkpoint import DetectionCheckpointer
 from mask2former import add_maskformer2_config
 
 # ============ 配置 ============
-image_path = "/data1/user/data/2026.05.10_机狗二次数据采集结果_标定/image/1590192560109912832.png"
+image_path = "/data1/user/data/2026.05.10_机狗二次数据采集结果_标定/image/1590192619209514752.png"
 
+# cityscape
 # CONFIG_FILE = "/data1/user/Dense-Object-level-Mapping/Mask2Former/configs/cityscapes/semantic-segmentation/maskformer2_dinov3_vitl_bs16_90k.yaml"
 # CHECKPOINT = "/data1/user/Dense-Object-level-Mapping/Mask2Former/output/dinov3_vitl_cityscapes_m2f/model_final.pth"
 # PALETTE_FILE = "/data1/user/Dense-Object-level-Mapping/dinov3/yaml/cityscape.yaml"
 
-# 总推理时间: 2.89s
+# robotdog_ade20k
 CONFIG_FILE = "/data1/user/Dense-Object-level-Mapping/Mask2Former/configs/robotdog/maskformer2_dinov3_vitl_robotdog_ade20k.yaml"
 CHECKPOINT = "/data1/user/Dense-Object-level-Mapping/Mask2Former/output/dinov3_vitl_robotdog_ade20k_distill/model_final.pth"
-PALETTE_FILE = "/data1/user/Dense-Object-level-Mapping/dinov3/yaml/ADE20k.yaml"  # 换成 ADE20K 调色板
+PALETTE_FILE = "/data1/user/Dense-Object-level-Mapping/dinov3/yaml/ADE20k.yaml"  # 
 
-output_path = "output/train/dinov3_vitl_robotdog_ade20k_distill/"
+BENCHMARK_STAGE = os.environ.get("BENCHMARK_STAGE", "final").lower()
+_OUTPUT_ROOT = "output_midterm" if BENCHMARK_STAGE == "midterm" else "output"
+output_path = f"{_OUTPUT_ROOT}/train/dinov3_vitl_robotdog_ade20k_distill/"
 
 # ============ 工具函数 ============
 def load_palette(palette_file):
@@ -72,10 +75,7 @@ inputs = [{
 palette_array = load_palette(PALETTE_FILE)
 
 with torch.inference_mode():
-    start_time = time.time()
     outputs = model(inputs)
-    elapsed = time.time() - start_time
-    print(f"推理时间: {elapsed:.2f}s")
 
 sem_seg = outputs[0]["sem_seg"]  # (NUM_CLASSES, H, W)
 mask = sem_seg.argmax(dim=0).cpu().numpy()

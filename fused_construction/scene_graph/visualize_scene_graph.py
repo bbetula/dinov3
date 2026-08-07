@@ -110,8 +110,12 @@ def project_xy(x: float, y: float, bounds: tuple[float, float, float, float], wi
 
 
 def node_radius(node: dict) -> float:
-    count = max(1, int(node.get("point_count", 1)))
-    return max(7.0, min(24.0, 5.0 + math.log10(count + 1) * 5.0))
+    extent = node.get("bbox_extent") or []
+    try:
+        diag = math.sqrt(sum(max(0.0, float(v)) ** 2 for v in extent[:3]))
+    except (TypeError, ValueError):
+        diag = 0.0
+    return max(4.5, min(14.0, 4.0 + math.log1p(diag) * 4.0))
 
 
 def truncate(text: str, max_len: int) -> str:
@@ -134,7 +138,7 @@ def write_topdown_svg(path: Path, title: str, nodes: list[dict], edges: list[dic
         "</style>",
         '<rect width="100%" height="100%" fill="#f8fafc"/>',
         f'<text class="title" x="36" y="46">{esc(title)} - Top-down Spatial View</text>',
-        f'<text class="meta" x="36" y="76">nodes={len(nodes)}, edges={len(edges)}. Node position = centroid(x,y), size = log(point_count).</text>',
+        f'<text class="meta" x="36" y="76">nodes={len(nodes)}, edges={len(edges)}. Node position = centroid(x,y), compact size = bbox extent.</text>',
     ]
 
     for edge in edges:
@@ -240,7 +244,7 @@ def svg_text_topdown(title: str, nodes: list[dict], edges: list[dict], max_label
         "</style>",
         '<rect width="100%" height="100%" fill="#f8fafc"/>',
         f'<text class="title" x="36" y="46">{esc(title)} - Top-down Spatial View</text>',
-        f'<text class="meta" x="36" y="76">nodes={len(nodes)}, edges={len(edges)}. Node position = centroid(x,y), size = log(point_count).</text>',
+        f'<text class="meta" x="36" y="76">nodes={len(nodes)}, edges={len(edges)}. Node position = centroid(x,y), compact size = bbox extent.</text>',
     ]
 
     for edge in edges:
@@ -373,13 +377,17 @@ def write_html(path: Path, title: str, payload: dict) -> None:
       <input id="nodeSearch" type="search" placeholder="查询节点/类别" />
       <input id="edgeSearch" type="search" placeholder="查询边：源/关系/目标" />
       <select id="relationFilter"><option value="">全部关系</option></select>
-      <select id="labelMode">
-        <option value="selected">选中标签</option>
-        <option value="major">主要标签</option>
-        <option value="all">全部标签</option>
-        <option value="none">隐藏标签</option>
-      </select>
       <label class="switch"><input id="edgeToggle" type="checkbox" checked /> 显示边</label>
+      <select id="layoutMode">
+        <option value="radial">关系展开</option>
+        <option value="physical" selected>物理坐标</option>
+      </select>
+      <select id="spacingMode">
+        <option value="1" selected>物理1:1</option>
+        <option value="3">紧凑间距</option>
+        <option value="7">普通间距</option>
+        <option value="12">清晰间距</option>
+      </select>
       <button id="fitBtn">适配3D</button>
       <button id="clearBtn">清空选择</button>
       <span class="muted" id="countText"></span>
@@ -406,13 +414,13 @@ def write_html(path: Path, title: str, payload: dict) -> None:
     <div class="tables">
       <section>
         <table>
-          <thead><tr><th>ID</th><th>类别</th><th>类型</th><th>点数</th></tr></thead>
+          <thead><tr><th>ID</th><th>类别</th><th>尺寸(m)</th><th>点数</th></tr></thead>
           <tbody id="nodeTable"></tbody>
         </table>
       </section>
       <section>
         <table>
-          <thead><tr><th>源节点</th><th>关系</th><th>目标节点</th><th>置信度</th></tr></thead>
+          <thead><tr><th>源节点</th><th>关系</th><th>目标节点</th><th>中心距</th></tr></thead>
           <tbody id="edgeTable"></tbody>
         </table>
       </section>
@@ -435,10 +443,10 @@ def write_html(path: Path, title: str, payload: dict) -> None:
     for (const n of nodes) countsByLabel[n.label] = (countsByLabel[n.label] || 0) + 1;
     const labels = Object.keys(countsByLabel).sort((a, b) => countsByLabel[b] - countsByLabel[a] || a.localeCompare(b));
     const hiddenLabels = new Set();
-    const state = { nodeSearch:'', edgeSearch:'', relation:'', labelMode:'selected', showEdges:true, selectedNode:null, selectedEdge:null, hover:null };
+    const state = { nodeSearch:'', edgeSearch:'', relation:'', showEdges:true, layoutMode:'physical', spacing:1, selectedNode:null, selectedEdge:null, hover:null };
     const nodeMeshes = new Map();
     const edgeObjects = new Map();
-    const labelSprites = new Map();
+    const layoutPositions = new Map();
 
     const container = document.getElementById('scene3d');
     const tip = document.getElementById('hoverTip');
@@ -462,12 +470,41 @@ def write_html(path: Path, title: str, payload: dict) -> None:
     dir.position.set(20, 30, 40);
     scene.add(dir);
 
+    function rawScenePoint(values) {
+      const c = values || [0, 0, 0];
+      return new THREE.Vector3(Number(c[0]) || 0, Number(c[2]) || 0, -(Number(c[1]) || 0));
+    }
+    function bboxSize(node) {
+      const e = node.bbox_extent || [0, 0, 0];
+      return new THREE.Vector3(Math.max(0, Number(e[0]) || 0), Math.max(0, Number(e[2]) || 0), Math.max(0, Number(e[1]) || 0));
+    }
+    function rawDistance(a, b) {
+      const ac = a.centroid || [0, 0, 0];
+      const bc = b.centroid || [0, 0, 0];
+      const dx = (Number(ac[0]) || 0) - (Number(bc[0]) || 0);
+      const dy = (Number(ac[1]) || 0) - (Number(bc[1]) || 0);
+      const dz = (Number(ac[2]) || 0) - (Number(bc[2]) || 0);
+      return Math.hypot(dx, dy, dz);
+    }
+    const sceneBox = new THREE.Box3();
+    for (const node of nodes) {
+      sceneBox.expandByPoint(rawScenePoint(node.bbox_min || node.centroid));
+      sceneBox.expandByPoint(rawScenePoint(node.bbox_max || node.centroid));
+    }
+    const sceneSize = new THREE.Vector3();
+    const sceneCenter = new THREE.Vector3();
+    sceneBox.getSize(sceneSize);
+    sceneBox.getCenter(sceneCenter);
+    const sceneDiag = Math.max(sceneSize.length(), 1);
+    const markerMinRadius = Math.max(sceneDiag * 0.001, 0.014);
+    const markerMaxRadius = Math.max(markerMinRadius * 1.25, sceneDiag * 0.002);
+
     const root = new THREE.Group();
     scene.add(root);
-    const grid = new THREE.GridHelper(120, 24, 0xcbd5e1, 0xe5e7eb);
+    const grid = new THREE.GridHelper(Math.max(sceneDiag * 1.5, 20), 24, 0xcbd5e1, 0xe5e7eb);
     grid.position.y = 0;
     root.add(grid);
-    const axes = new THREE.AxesHelper(8);
+    const axes = new THREE.AxesHelper(Math.max(sceneDiag * 0.15, 2));
     root.add(axes);
 
     function rgbHex(rgb) {
@@ -479,14 +516,41 @@ def write_html(path: Path, title: str, payload: dict) -> None:
       return `rgb(${c[0] || 0},${c[1] || 0},${c[2] || 0})`;
     }
     function pos(node) {
-      const c = node.centroid || [0, 0, 0];
-      return new THREE.Vector3(Number(c[0]) || 0, Number(c[2]) || 0, -(Number(c[1]) || 0));
+      return (layoutPositions.get(node.id) || scaledPoint(node.centroid)).clone();
+    }
+    function scaledPoint(values) {
+      const raw = rawScenePoint(values);
+      return sceneCenter.clone().add(raw.sub(sceneCenter).multiplyScalar(state.spacing));
+    }
+    function bboxCenter(node) {
+      const centroid = rawScenePoint(node.centroid || [0, 0, 0]);
+      const center = rawScenePoint(node.bbox_center || node.centroid || [0, 0, 0]);
+      return pos(node).add(center.sub(centroid));
+    }
+    function expandNodeBounds(box, node) {
+      const center = bboxCenter(node);
+      const half = bboxSize(node).multiplyScalar(0.5);
+      box.expandByPoint(center.clone().sub(half));
+      box.expandByPoint(center.clone().add(half));
     }
     function radius(node) {
-      return Math.max(0.14, Math.min(1.35, 0.11 + Math.log10((node.point_count || 1) + 1) * 0.24));
+      return sceneDiag * 0.006;
+    }
+    function extentText(node) {
+      const e = node.bbox_extent || [0, 0, 0];
+      return e.slice(0, 3).map(v => Number(v || 0).toFixed(2)).join(' x ');
+    }
+    function edgeDistance(edge) {
+      const s = byId.get(edge.source);
+      const t = byId.get(edge.target);
+      return s && t ? rawDistance(s, t) : NaN;
     }
     function nodeLabel(n) { return `${n.label}:${n.id}`; }
-    function edgeText(e) { return `${e.source} ${e.relation} ${e.target}`; }
+    function edgeText(e) {
+      const dist = edgeDistance(e);
+      const suffix = Number.isFinite(dist) ? ` | ${dist.toFixed(2)} m` : '';
+      return `${e.source} ${e.relation} ${e.target}${suffix}`;
+    }
     function matchesNode(n) {
       if (hiddenLabels.has(n.label)) return false;
       if (!state.nodeSearch) return true;
@@ -501,41 +565,136 @@ def write_html(path: Path, title: str, payload: dict) -> None:
       return String(e.id || '').toLowerCase().includes(q) || String(e.source).toLowerCase().includes(q) || String(e.target).toLowerCase().includes(q) || String(e.relation).toLowerCase().includes(q);
     }
 
-    function makeTextSprite(text) {
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      ctx.font = '26px Arial';
-      const w = Math.min(760, Math.ceil(ctx.measureText(text).width + 28));
-      canvas.width = w;
-      canvas.height = 42;
-      ctx.font = '26px Arial';
-      ctx.fillStyle = 'rgba(255,255,255,.92)';
-      ctx.fillRect(0, 0, w, 42);
-      ctx.strokeStyle = 'rgba(100,116,139,.6)';
-      ctx.strokeRect(0, 0, w, 42);
-      ctx.fillStyle = '#111827';
-      ctx.fillText(text.length > 52 ? text.slice(0, 51) + '…' : text, 12, 29);
-      const tex = new THREE.CanvasTexture(canvas);
-      const mat = new THREE.SpriteMaterial({ map: tex, depthTest:false, depthWrite:false });
-      const sprite = new THREE.Sprite(mat);
-      sprite.scale.set(w / 42 * 1.05, 1.05, 1);
-      sprite.visible = false;
-      return sprite;
+    function computeLayoutPositions() {
+      layoutPositions.clear();
+      if (state.layoutMode === 'radial') {
+        computeRadialLayoutPositions();
+        return;
+      }
+      const records = nodes.map((node, idx) => ({ node, idx, point: scaledPoint(node.centroid || [0, 0, 0]) }));
+      if (state.spacing <= 1) {
+        for (const record of records) layoutPositions.set(record.node.id, record.point);
+        return;
+      }
+      const minSep = Math.max(sceneDiag * 0.16, sceneDiag * state.spacing * 0.012, markerMaxRadius * 18);
+      const stepLimit = minSep * 0.35;
+      for (let iter = 0; iter < 90; iter++) {
+        let moved = false;
+        for (let i = 0; i < records.length; i++) {
+          for (let j = i + 1; j < records.length; j++) {
+            const a = records[i];
+            const b = records[j];
+            let dx = b.point.x - a.point.x;
+            let dz = b.point.z - a.point.z;
+            let d = Math.hypot(dx, dz);
+            if (d >= minSep) continue;
+            if (d < 1e-6) {
+              const angle = ((a.idx * 92821 + b.idx * 68917) % 6283) / 1000;
+              dx = Math.cos(angle);
+              dz = Math.sin(angle);
+              d = 1;
+            }
+            const push = Math.min((minSep - d) * 0.5, stepLimit);
+            const ux = dx / d;
+            const uz = dz / d;
+            a.point.x -= ux * push;
+            a.point.z -= uz * push;
+            b.point.x += ux * push;
+            b.point.z += uz * push;
+            moved = true;
+          }
+        }
+        if (!moved) break;
+      }
+      for (const record of records) layoutPositions.set(record.node.id, record.point);
     }
+
+    function computeRadialLayoutPositions() {
+      const degree = new Map(nodes.map(node => [node.id, 0]));
+      for (const edge of edges) {
+        if (degree.has(edge.source)) degree.set(edge.source, degree.get(edge.source) + 1);
+        if (degree.has(edge.target)) degree.set(edge.target, degree.get(edge.target) + 1);
+      }
+      const rawCenter = rawScenePoint([0, 0, 0]);
+      const layoutRadius = Math.max(sceneDiag * state.spacing * 0.6, sceneDiag * 8.0);
+      const sorted = [...nodes].sort((a, b) => {
+        const da = degree.get(a.id) || 0;
+        const db = degree.get(b.id) || 0;
+        return db - da || String(a.label).localeCompare(String(b.label)) || String(a.id).localeCompare(String(b.id));
+      });
+      const outer = sorted;
+      const labelBuckets = new Map();
+      for (const node of outer) {
+        const label = String(node.label || '');
+        if (!labelBuckets.has(label)) labelBuckets.set(label, []);
+        labelBuckets.get(label).push(node);
+      }
+      const buckets = [...labelBuckets.entries()].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]));
+      let slot = 0;
+      for (const [, bucket] of buckets) {
+        const bucketStart = slot;
+        for (let local = 0; local < bucket.length; local++, slot++) {
+          const node = bucket[local];
+          const raw = rawScenePoint(node.centroid || [0, 0, 0]).sub(rawCenter);
+          let angle = Math.atan2(raw.z, raw.x);
+          if (!Number.isFinite(angle)) angle = 0;
+          const spreadAngle = (2 * Math.PI * (bucketStart + local / Math.max(bucket.length, 1))) / Math.max(outer.length, 1);
+          angle = angle * 0.55 + spreadAngle * 0.45;
+          const ring = 1 + (local % 3) * 0.32 + Math.floor(slot / Math.max(outer.length, 1)) * 0.16;
+          const r = layoutRadius * ring;
+          const y = raw.y * 0.35 + ((local % 5) - 2) * markerMaxRadius * 5;
+          layoutPositions.set(node.id, new THREE.Vector3(Math.cos(angle) * r, y, Math.sin(angle) * r));
+        }
+      }
+      relaxLayoutPositions(Math.max(sceneDiag * 1.6, markerMaxRadius * 90), 180);
+    }
+
+    function relaxLayoutPositions(minSep, iterations) {
+      const records = nodes.map((node, idx) => ({ node, idx, point: (layoutPositions.get(node.id) || scaledPoint(node.centroid)).clone() }));
+      const stepLimit = minSep * 0.35;
+      for (let iter = 0; iter < iterations; iter++) {
+        let moved = false;
+        for (let i = 0; i < records.length; i++) {
+          for (let j = i + 1; j < records.length; j++) {
+            const a = records[i];
+            const b = records[j];
+            let dx = b.point.x - a.point.x;
+            let dz = b.point.z - a.point.z;
+            let d = Math.hypot(dx, dz);
+            if (d >= minSep) continue;
+            if (d < 1e-6) {
+              const angle = ((a.idx * 92821 + b.idx * 68917) % 6283) / 1000;
+              dx = Math.cos(angle);
+              dz = Math.sin(angle);
+              d = 1;
+            }
+            const push = Math.min((minSep - d) * 0.5, stepLimit);
+            const ux = dx / d;
+            const uz = dz / d;
+            a.point.x -= ux * push;
+            a.point.z -= uz * push;
+            b.point.x += ux * push;
+            b.point.z += uz * push;
+            moved = true;
+          }
+        }
+        if (!moved) break;
+      }
+      for (const record of records) layoutPositions.set(record.node.id, record.point);
+    }
+
+    computeLayoutPositions();
 
     const sphereGeom = new THREE.SphereGeometry(1, 20, 14);
     for (const node of nodes) {
-      const mat = new THREE.MeshStandardMaterial({ color: rgbHex(node.color_rgb), roughness:0.55, metalness:0.04 });
+      const mat = new THREE.MeshStandardMaterial({ color: rgbHex(node.color_rgb), roughness:0.55, metalness:0.05 });
       const mesh = new THREE.Mesh(sphereGeom, mat);
-      mesh.scale.setScalar(radius(node));
+      const baseScale = radius(node);
+      mesh.scale.setScalar(baseScale);
       mesh.position.copy(pos(node));
-      mesh.userData = { type:'node', node, baseColor: mat.color.clone(), baseScale: radius(node) };
+      mesh.userData = { type:'node', node, baseColor: mat.color.clone(), baseScale };
       root.add(mesh);
       nodeMeshes.set(node.id, mesh);
-      const label = makeTextSprite(nodeLabel(node));
-      label.position.copy(mesh.position).add(new THREE.Vector3(radius(node) + 0.35, radius(node) + 0.35, 0));
-      // Labels are shown through hover/detail panels to keep the 3D space readable.
-      labelSprites.set(node.id, label);
     }
 
     for (const edge of edges) {
@@ -544,11 +703,29 @@ def write_html(path: Path, title: str, payload: dict) -> None:
       if (!s || !t) continue;
       const points = [pos(s), pos(t)];
       const geom = new THREE.BufferGeometry().setFromPoints(points);
-      const mat = new THREE.LineBasicMaterial({ color: relationColors[edge.relation] || '#64748b', transparent:true, opacity:0.42 });
+      const dist = rawDistance(s, t);
+      const mat = new THREE.LineBasicMaterial({ color: relationColors[edge.relation] || '#64748b', transparent:true, opacity:0.45 });
       const line = new THREE.Line(geom, mat);
-      line.userData = { type:'edge', edge };
+      line.userData = { type:'edge', edge, distance:dist };
       root.add(line);
       edgeObjects.set(edge.id, line);
+    }
+
+    function applyLayout() {
+      computeLayoutPositions();
+      for (const node of nodes) {
+        const mesh = nodeMeshes.get(node.id);
+        if (!mesh) continue;
+        mesh.position.copy(pos(node));
+      }
+      for (const [id, line] of edgeObjects) {
+        const edge = line.userData.edge;
+        const s = byId.get(edge.source);
+        const t = byId.get(edge.target);
+        if (!s || !t) continue;
+        line.geometry.setFromPoints([pos(s), pos(t)]);
+        line.geometry.computeBoundingSphere();
+      }
     }
 
     function visibleNodes() { return nodes.filter(matchesNode); }
@@ -558,7 +735,6 @@ def write_html(path: Path, title: str, payload: dict) -> None:
       const edgeSet = new Set(visibleEdges().map(e => e.id));
       const nodeSet = new Set(visibleNodes().map(n => n.id));
       for (const [id, mesh] of nodeMeshes) mesh.visible = nodeSet.has(id);
-      for (const [id, label] of labelSprites) label.visible = false;
       for (const [id, line] of edgeObjects) line.visible = state.showEdges && edgeSet.has(id);
       updateHighlights();
       renderTables();
@@ -570,21 +746,23 @@ def write_html(path: Path, title: str, payload: dict) -> None:
         const selected = state.selectedNode && state.selectedNode.id === id;
         const edgeSelected = state.selectedEdge && (state.selectedEdge.source === id || state.selectedEdge.target === id);
         const hoverNode = state.hover && state.hover.type === 'node' && state.hover.node.id === id;
-        mesh.material.emissive = new THREE.Color(selected || edgeSelected ? 0x2563eb : hoverNode ? 0x111827 : 0x000000);
-        mesh.material.emissiveIntensity = selected || edgeSelected || hoverNode ? 0.55 : 0;
-        const scale = mesh.userData.baseScale * (selected || edgeSelected ? 1.75 : hoverNode ? 1.35 : 1);
-        mesh.scale.setScalar(scale);
-        const label = labelSprites.get(id);
-        if (label) {
-          const major = state.labelMode === 'major' && ((mesh.userData.node.kind || '').includes('region') || (mesh.userData.node.point_count || 0) >= 300);
-          const searchHit = state.nodeSearch && matchesNode(mesh.userData.node);
-          label.visible = (state.labelMode === 'all' && (selected || edgeSelected || hoverNode || searchHit)) || major || selected || edgeSelected || hoverNode || searchHit;
+        if (selected || edgeSelected) {
+          mesh.material.emissive.set(0x2563eb);
+          mesh.material.emissiveIntensity = 0.55;
+        } else if (hoverNode) {
+          mesh.material.emissive.set(0x111827);
+          mesh.material.emissiveIntensity = 0.55;
+        } else {
+          mesh.material.emissive.set(0x000000);
+          mesh.material.emissiveIntensity = 0;
         }
+        const scale = mesh.userData.baseScale * (selected || edgeSelected ? 1.3 : hoverNode ? 1.15 : 1);
+        mesh.scale.setScalar(scale);
       }
       for (const [id, line] of edgeObjects) {
         const selected = state.selectedEdge && state.selectedEdge.id === id;
         const hoverEdge = state.hover && state.hover.type === 'edge' && state.hover.edge.id === id;
-        line.material.opacity = selected || hoverEdge ? 1.0 : 0.34;
+        line.material.opacity = selected || hoverEdge ? 0.95 : 0.2;
         line.material.linewidth = selected || hoverEdge ? 4 : 1;
       }
     }
@@ -592,8 +770,7 @@ def write_html(path: Path, title: str, payload: dict) -> None:
     function fitCamera() {
       const box = new THREE.Box3();
       for (const n of visibleNodes()) {
-        const mesh = nodeMeshes.get(n.id);
-        if (mesh && mesh.visible) box.expandByObject(mesh);
+        expandNodeBounds(box, n);
       }
       if (box.isEmpty()) return;
       const size = new THREE.Vector3();
@@ -601,7 +778,7 @@ def write_html(path: Path, title: str, payload: dict) -> None:
       box.getSize(size);
       box.getCenter(center);
       const maxDim = Math.max(size.x, size.y, size.z, 1);
-      camera.position.copy(center).add(new THREE.Vector3(maxDim * 0.95, maxDim * 0.72, maxDim * 1.05));
+      camera.position.copy(center).add(new THREE.Vector3(maxDim * 1.05, maxDim * 0.78, maxDim * 1.16));
       camera.near = Math.max(0.01, maxDim / 1000);
       camera.far = maxDim * 20;
       camera.updateProjectionMatrix();
@@ -629,12 +806,13 @@ def write_html(path: Path, title: str, payload: dict) -> None:
       if (state.selectedNode) {
         const n = state.selectedNode;
         const connected = edges.filter(e => e.source === n.id || e.target === n.id);
-        detail.innerHTML = `<div><strong>${n.id}</strong></div><div>类别：${n.label}</div><div>类型：${n.kind}</div><div>点数：${n.point_count}</div><div>坐标：${(n.centroid || []).map(v => Number(v).toFixed(2)).join(', ')}</div><div>关联边：${connected.length}</div>`;
+        detail.innerHTML = `<div><strong>${n.id}</strong></div><div>类别：${n.label}</div><div>类型：${n.kind}</div><div>点数：${n.point_count}</div><div>中心坐标：${(n.centroid || []).map(v => Number(v).toFixed(2)).join(', ')}</div><div>物理尺寸：${extentText(n)} m</div><div>关联边：${connected.length}</div>`;
         return;
       }
       if (state.selectedEdge) {
         const e = state.selectedEdge;
-        detail.innerHTML = `<div><strong>${e.id}</strong></div><div>源节点：${e.source}</div><div>关系：${e.relation}</div><div>目标节点：${e.target}</div><div>置信度：${e.confidence}</div><div>证据：${JSON.stringify(e.evidence || {})}</div>`;
+        const dist = edgeDistance(e);
+        detail.innerHTML = `<div><strong>${e.id}</strong></div><div>源节点：${e.source}</div><div>关系：${e.relation}</div><div>目标节点：${e.target}</div><div>中心距离：${Number.isFinite(dist) ? dist.toFixed(3) + ' m' : '-'}</div><div>置信度：${e.confidence}</div><div>证据：${JSON.stringify(e.evidence || {})}</div>`;
         return;
       }
       detail.innerHTML = '<span class="muted">未选择节点或边</span>';
@@ -665,16 +843,21 @@ def write_html(path: Path, title: str, payload: dict) -> None:
 
     function renderTables() {
       const nodeTable = document.getElementById('nodeTable');
-      nodeTable.innerHTML = visibleNodes().map(n => `<tr data-node="${n.id}" class="${state.selectedNode && state.selectedNode.id === n.id ? 'selected' : ''}"><td>${n.id}</td><td>${n.label}</td><td>${n.kind}</td><td>${n.point_count}</td></tr>`).join('');
+      nodeTable.innerHTML = visibleNodes().map(n => `<tr data-node="${n.id}" class="${state.selectedNode && state.selectedNode.id === n.id ? 'selected' : ''}"><td>${n.id}</td><td>${n.label}</td><td>${extentText(n)}</td><td>${n.point_count}</td></tr>`).join('');
       for (const tr of nodeTable.querySelectorAll('tr')) tr.onclick = () => selectNode(byId.get(tr.dataset.node));
       const edgeTable = document.getElementById('edgeTable');
-      edgeTable.innerHTML = visibleEdges().map(e => `<tr data-edge="${e.id}" class="${state.selectedEdge && state.selectedEdge.id === e.id ? 'selected' : ''}"><td>${e.source}</td><td>${e.relation}</td><td>${e.target}</td><td>${e.confidence}</td></tr>`).join('');
+      edgeTable.innerHTML = visibleEdges().map(e => {
+        const dist = edgeDistance(e);
+        const distText = Number.isFinite(dist) ? dist.toFixed(2) + ' m' : '-';
+        return `<tr data-edge="${e.id}" class="${state.selectedEdge && state.selectedEdge.id === e.id ? 'selected' : ''}"><td>${e.source}</td><td>${e.relation}</td><td>${e.target}</td><td>${distText}</td></tr>`;
+      }).join('');
       for (const tr of edgeTable.querySelectorAll('tr')) tr.onclick = () => selectEdge(edges.find(e => e.id === tr.dataset.edge));
     }
 
     function updateCounts() {
       document.getElementById('countText').textContent = `${visibleNodes().length}/${nodes.length} nodes, ${visibleEdges().length}/${edges.length} edges`;
-      document.getElementById('legendText').textContent = '3D: 左键旋转，滚轮缩放，右键/中键平移；点击节点或边查看详情';
+      const modeText = state.layoutMode === 'radial' ? '关系展开布局' : '物理展开布局';
+      document.getElementById('legendText').textContent = `3D: ${modeText} x${state.spacing.toFixed(0)}，节点为固定圆点，坐标与距离为真实值`;
     }
 
     const raycaster = new THREE.Raycaster();
@@ -693,7 +876,7 @@ def write_html(path: Path, title: str, payload: dict) -> None:
         tip.style.display = 'block';
         tip.style.left = `${ev.clientX - rect.left + 14}px`;
         tip.style.top = `${ev.clientY - rect.top + 14}px`;
-        tip.textContent = hit.userData.type === 'node' ? nodeLabel(hit.userData.node) : edgeText(hit.userData.edge);
+        tip.textContent = hit.userData.type === 'node' ? `${nodeLabel(hit.userData.node)} | ${extentText(hit.userData.node)} m` : edgeText(hit.userData.edge);
         if (commit) hit.userData.type === 'node' ? selectNode(hit.userData.node) : selectEdge(hit.userData.edge);
       } else {
         state.hover = null;
@@ -710,8 +893,19 @@ def write_html(path: Path, title: str, payload: dict) -> None:
     document.getElementById('nodeSearch').oninput = ev => { state.nodeSearch = ev.target.value.trim(); updateVisibility(); fitCamera(); };
     document.getElementById('edgeSearch').oninput = ev => { state.edgeSearch = ev.target.value.trim(); updateVisibility(); };
     document.getElementById('relationFilter').onchange = ev => { state.relation = ev.target.value; updateVisibility(); };
-    document.getElementById('labelMode').onchange = ev => { state.labelMode = ev.target.value; updateHighlights(); };
     document.getElementById('edgeToggle').onchange = ev => { state.showEdges = ev.target.checked; updateVisibility(); };
+    document.getElementById('layoutMode').onchange = ev => {
+      state.layoutMode = ev.target.value || 'radial';
+      applyLayout();
+      updateVisibility();
+      fitCamera();
+    };
+    document.getElementById('spacingMode').onchange = ev => {
+      state.spacing = Number(ev.target.value) || 12;
+      applyLayout();
+      updateVisibility();
+      fitCamera();
+    };
     document.getElementById('fitBtn').onclick = fitCamera;
     document.getElementById('clearBtn').onclick = () => {
       state.nodeSearch = ''; state.edgeSearch = ''; state.relation = ''; state.selectedNode = null; state.selectedEdge = null;
@@ -734,6 +928,7 @@ def write_html(path: Path, title: str, payload: dict) -> None:
     buildControls();
     updateDetail();
     resize();
+    applyLayout();
     updateVisibility();
     fitCamera();
     animate();

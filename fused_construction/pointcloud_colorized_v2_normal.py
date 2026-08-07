@@ -34,7 +34,7 @@ class Config:
     RES_SUBDIR = "res"
 
     # True: 读取全局点云并多帧投票；False: 逐帧读取 image 同级 lidar/*.pcd 单帧投影
-    GLOBAL_VOTE_ENABLED = False
+    GLOBAL_VOTE_ENABLED = True
     MIN_VOTES_PER_POINT = 5
     LABEL_CACHE_SIZE = 32
     PROGRESS_INTERVAL = 50

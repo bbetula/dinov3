@@ -13,6 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from metric_common import (
+    BENCHMARK_STAGE,
     SEM_ACC_DIR,
     TARGET_ACCURACY,
     ensure_dir,
@@ -21,7 +22,10 @@ from metric_common import (
 
 # ============ 配置 ============
 GT_ROOT = Path("/data1/user/data/2026.05.10_机狗二次数据采集结果_标定/image/res_dinov3_whole")
-PRED_ROOT = Path("/data1/user/data/2026.05.10_机狗二次数据采集结果_标定/image/res_robotdog_distill")
+if BENCHMARK_STAGE == "midterm":
+    PRED_ROOT = Path("/data1/user/data/2026.05.10_机狗二次数据采集结果_标定/image/res_robotdog_distill_midterm")
+else:
+    PRED_ROOT = Path("/data1/user/data/2026.05.10_机狗二次数据采集结果_标定/image/res_robotdog_distill")
 MASK_ID_SUFFIX = "_mask_id.png"
 
 NUM_CLASSES = 150  # ADE20K
@@ -119,9 +123,8 @@ def metrics_from_confusion(confusion) -> dict:
         "mAcc_percent": macc * 100 if macc is not None else None,
         "total_valid_pixels": total_valid_pixels,
         "total_correct_pixels": total_correct_pixels,
-        "num_classes_present": int((gt_total > 0).sum()),
-        "class_iou": iou.tolist(),
-        "class_acc": acc.tolist(),
+        "_class_iou": iou,  # 内部用于 fwIoU 和 top_classes 计算，不输出到 JSON
+        "_class_acc": acc,
     }
 
 
@@ -199,7 +202,8 @@ def main() -> int:
     # 重要类别 (frequency-weighted) 一致性: 用 GT pixel 数加权 IoU
     gt_total = full_confusion.sum(axis=1).astype(np.float64)
     freq = gt_total / gt_total.sum() if gt_total.sum() > 0 else np.zeros_like(gt_total)
-    class_iou = np.asarray(full_summary["class_iou"], dtype=np.float64)
+    class_iou = full_summary.pop("_class_iou")
+    class_acc = full_summary.pop("_class_acc")
     fwiou_mask = ~np.isnan(class_iou)
     fwiou = float((freq[fwiou_mask] * class_iou[fwiou_mask]).sum()) if fwiou_mask.any() else None
 
@@ -223,7 +227,6 @@ def main() -> int:
         "gt_root": str(GT_ROOT),
         "pred_root": str(PRED_ROOT),
         "num_classes": NUM_CLASSES,
-        "total_images": len(pairs),
         "full_image_metric": {
             **full_summary,
             "frequency_weighted_IoU": fwiou,
@@ -233,7 +236,6 @@ def main() -> int:
         },
         "top_classes_by_pixel_share": top_classes,
         "per_image_csv_full": str(full_csv),
-        "class_names": class_names,
     }
 
     out = SEM_ACC_DIR / RESULT_FILE
@@ -242,12 +244,11 @@ def main() -> int:
     print(f"[INFO] result JSON: {out}")
     print(f"[INFO] full CSV: {full_csv}")
     print()
-    print(f"=== 整体指标 ({len(pairs)} 张图) ===")
+    print(f"=== 整体指标 ===")
     print(f"  Pixel Accuracy : {full_summary['pixel_accuracy_percent']:.4f}%")
     print(f"  mIoU (150)     : {full_summary['mIoU_percent']:.4f}%")
     print(f"  mAcc (150)     : {full_summary['mAcc_percent']:.4f}%")
     print(f"  fwIoU          : {fwiou * 100:.4f}%" if fwiou is not None else "  fwIoU          : None")
-    print(f"  实际出现类别数 : {full_summary['num_classes_present']} / {NUM_CLASSES}")
     print()
     print(f"=== Top {len(top_classes)} 频繁类别 IoU ===")
     for item in top_classes:

@@ -29,7 +29,25 @@ SCANNET_NUM_CLASSES = 41
 SCANNET_IGNORE_LABELS = (0, 255)
 SCANNET_EVAL_WORKERS = 16
 
-OUTPUT_ROOT = DINO_DIR / "output"
+# ============ 中期 / 终期 切换 ============
+# export BENCHMARK_STAGE=midterm  → 中期指标 (accuracy>=80%, latency<=500ms, 输出到 output_midterm/)
+# export BENCHMARK_STAGE=final    → 终期指标 (accuracy>=90%, latency<=200ms, 输出到 output/)
+import os as __os
+BENCHMARK_STAGE = __os.environ.get("BENCHMARK_STAGE", "final").lower()
+if BENCHMARK_STAGE not in ("midterm", "final"):
+    raise ValueError(f"Unknown BENCHMARK_STAGE={BENCHMARK_STAGE!r}, must be 'midterm' or 'final'")
+
+import os as _os_stage
+# 中期/终期切换: export BENCHMARK_STAGE=midterm 或 final (默认 final)
+BENCHMARK_STAGE = _os_stage.environ.get("BENCHMARK_STAGE", "final").lower()
+if BENCHMARK_STAGE not in ("midterm", "final"):
+    raise ValueError(f"BENCHMARK_STAGE 只允许 midterm/final, 得到 {BENCHMARK_STAGE!r}")
+
+if BENCHMARK_STAGE == "midterm":
+    OUTPUT_ROOT = DINO_DIR / "output_midterm"
+else:
+    OUTPUT_ROOT = DINO_DIR / "output"
+
 SEM_ACC_DIR = OUTPUT_ROOT / "metric_semantic_segmentation_accuracy"
 LATENCY_DIR = OUTPUT_ROOT / "metric_real_time_segmentation_latency"
 SUMMARY_DIR = OUTPUT_ROOT / "metric_summary"
@@ -76,8 +94,12 @@ SEM_ACC_POINTS_PER_IMAGE = 20
 SEM_ACC_SEED = 20260511
 BENCHMARK_WARMUP = 1
 BENCHMARK_ITERS = 5
-TARGET_ACCURACY = 0.90
-TARGET_LATENCY_MS = 200.0
+if BENCHMARK_STAGE == "midterm":
+    TARGET_ACCURACY = 0.80
+    TARGET_LATENCY_MS = 500.0
+else:
+    TARGET_ACCURACY = 0.90
+    TARGET_LATENCY_MS = 200.0
 DEFAULT_SUFFIX = ".png"
 DEFAULT_IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".bmp")
 

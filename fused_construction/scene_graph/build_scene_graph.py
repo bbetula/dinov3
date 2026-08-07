@@ -139,6 +139,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dbscan-eps", default=BUILD_PARAMS["dbscan_eps"], type=float, help="DBSCAN eps for object/region components in meters.")
     parser.add_argument("--dbscan-min-points", default=BUILD_PARAMS["dbscan_min_points"], type=int)
     parser.add_argument("--max-instances-per-class", default=BUILD_PARAMS["max_instances_per_class"], type=int)
+    parser.add_argument("--max-instance-extent", default=3.0, type=float, help="Max bbox extent for a single non-structural instance. Oversized clusters are re-split.")
     parser.add_argument("--near-threshold", default=None, type=float, help="BBox distance threshold. Default is scene-adaptive.")
     parser.add_argument("--support-z-threshold", default=0.25, type=float)
     parser.add_argument("--xy-overlap-threshold", default=0.08, type=float)
@@ -368,10 +369,45 @@ def build_nodes(
         cluster_records.sort(key=lambda item: len(item[1]), reverse=True)
         cluster_records = cluster_records[: args.max_instances_per_class]
 
+        max_ext = getattr(args, "max_instance_extent", 3.0)
+        min_density = getattr(args, "min_oversized_density", 5.0)
+        refined = []
+        from scipy.spatial import cKDTree
+        for cid, idxs in cluster_records:
+            pts = class_points[idxs]
+            extent = pts.max(axis=0) - pts.min(axis=0)
+            if max(extent) <= max_ext:
+                refined.append((cid, idxs))
+                continue
+            vol = max(float(np.prod(extent)), 1e-6)
+            density = len(idxs) / vol
+            if density < min_density:
+                continue
+            sub_pcd = o3d.geometry.PointCloud()
+            sub_pcd.points = o3d.utility.Vector3dVector(pts)
+            coarse = sub_pcd.voxel_down_sample(voxel_size=args.voxel_size * 2.0)
+            coarse_pts = np.asarray(coarse.points)
+            if len(coarse_pts) < args.dbscan_min_points:
+                continue
+            refine_eps = args.dbscan_eps * 1.8
+            sub_labels = cluster_points(coarse_pts, refine_eps, args.dbscan_min_points)
+            tree = cKDTree(coarse_pts)
+            _, nn = tree.query(pts)
+            mapped = sub_labels[nn]
+            for sc in np.unique(mapped):
+                if sc == -1:
+                    continue
+                sub_idxs = idxs[mapped == sc]
+                if len(sub_idxs) >= args.min_instance_points:
+                    sub_pts = class_points[sub_idxs]
+                    sub_ext = sub_pts.max(axis=0) - sub_pts.min(axis=0)
+                    if max(sub_ext) <= max_ext:
+                        refined.append((f"{cid}_r{sc}", sub_idxs))
+        cluster_records = refined
+        cluster_records.sort(key=lambda item: len(item[1]), reverse=True)
+        cluster_records = cluster_records[: args.max_instances_per_class]
+
         if not cluster_records:
-            node_id = f"{sanitize_name(label_name)}_instance_000"
-            kind = "region" if is_structural else "object"
-            nodes.append(create_node(node_id, label_name, class_points, class_colors, kind, args.min_instance_points))
             continue
 
         for instance_idx, (_, idxs) in enumerate(cluster_records):

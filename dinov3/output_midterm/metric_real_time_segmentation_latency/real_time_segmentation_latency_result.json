@@ -1,0 +1,7 @@
+{
+  "metric": "real_time_segmentation_latency",
+  "definition": "average per-frame latency from input to segmentation output",
+  "target_latency_ms": 500.0,
+  "avg_frame_latency_ms": 64.69,
+  "pass": true
+}

@@ -3,7 +3,7 @@ from typing import Tuple
 
 import numpy as np
 import open3d as o3d
-from hdbscan_single_label_bbox_config import OUTPUT_BASE_DIR as HDBSCAN_OUTPUT_BASE_DIR, write_ply_with_faces
+from hdbscan_single_label_bbox import OUTPUT_BASE_DIR as HDBSCAN_OUTPUT_BASE_DIR, write_ply_with_faces
 from class_statics_config import LABEL_CHOICE, OUTSCENE
 from filter_detection_categories_bbox import is_target_file
 from generate_n_pcd_bbox import OUTPUT_BASE_DIR as GENERATED_COLOR_SEPARATED_DIR
